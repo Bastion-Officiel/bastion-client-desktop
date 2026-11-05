@@ -1,0 +1,66 @@
+{
+  "name": "bastion-desktop",
+  "version": "1.0.0",
+  "description": "Application Desktop officielle pour BASTION — Communication Hub",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux AppImage"
+  },
+  "keywords": [
+    "bastion",
+    "chat",
+    "voice",
+    "desktop",
+    "electron"
+  ],
+  "author": "BASTION Community",
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.bastion.desktop",
+    "productName": "BASTION",
+    "directories": {
+      "output": "dist"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Bastion-Officiel",
+        "repo": "bastion-client-desktop"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "../bastion-core",
+        "to": "bastion-core",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.log"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false,
+      "sign": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "BASTION",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

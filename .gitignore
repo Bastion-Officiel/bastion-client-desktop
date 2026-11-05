@@ -1,0 +1,25 @@
+# Dépendances et builds
+node_modules/
+dist/
+build/
+
+# Fichiers de script batch locaux (Windows dev uniquement)
+*.bat
+*.cmd
+*.ps1
+
+# Fichiers de logs et temporaires
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Configs IDE / éditeurs
+.vscode/
+.idea/
+
