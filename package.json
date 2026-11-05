@@ -1,6 +1,6 @@
 {
   "name": "bastion-desktop",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "Application Desktop officielle pour BASTION — Communication Hub",
   "main": "main.js",
   "scripts": {
@@ -51,9 +51,7 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.ico",
-      "signAndEditExecutable": false,
-      "sign": null
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": false,

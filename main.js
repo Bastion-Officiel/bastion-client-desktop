@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, Menu, Tray, nativeImage, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -113,15 +113,29 @@ if (!gotTheLock) {
 }
 
 async function initApp() {
+    if (process.platform === 'win32') {
+        app.setAppUserModelId('com.bastion.desktop');
+    }
     createSplashWindow();
     await ensureServerStarted();
     setupAutoUpdater();
 }
 
+function getAppIcon() {
+    const icoPath = path.join(__dirname, 'assets', 'icon.ico');
+    const pngPath = path.join(__dirname, 'assets', 'icon.png');
+    if (process.platform === 'win32' && fs.existsSync(icoPath)) {
+        return nativeImage.createFromPath(icoPath);
+    }
+    if (fs.existsSync(pngPath)) {
+        return nativeImage.createFromPath(pngPath);
+    }
+    return null;
+}
+
 // ─── Écran de Démarrage Splash (comme Discord) ───────────────────────────
 function createSplashWindow() {
-    const iconPath = path.join(__dirname, 'assets', 'icon.png');
-    const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
+    const appIcon = getAppIcon();
 
     splashWindow = new BrowserWindow({
         width: 320,
@@ -228,8 +242,7 @@ function launchMainWindow() {
 
 // ─── Fenêtre Principale de l'Application BASTION ──────────────────────────
 function createMainWindow() {
-    const iconPath = path.join(__dirname, 'assets', 'icon.png');
-    const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
+    const appIcon = getAppIcon();
 
     mainWindow = new BrowserWindow({
         width: 1280,
@@ -255,21 +268,48 @@ function createMainWindow() {
 
     // Permissions WebRTC automatiques (Micro, Caméra, Partage d'écran HD)
     mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
-        return ['media', 'notifications', 'pointerLock', 'fullscreen'].includes(permission);
+        return ['media', 'notifications', 'pointerLock', 'fullscreen', 'display-capture'].includes(permission);
     });
 
     mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-        callback(['media', 'notifications', 'pointerLock', 'fullscreen'].includes(permission));
+        callback(['media', 'notifications', 'pointerLock', 'fullscreen', 'display-capture'].includes(permission));
+    });
+
+    // Support natif de navigator.mediaDevices.getDisplayMedia dans Electron
+    mainWindow.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+        desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+            // Sélectionne le premier écran par défaut ou la fenêtre active
+            if (sources && sources.length > 0) {
+                callback({ video: sources[0] });
+            } else {
+                callback({});
+            }
+        }).catch((err) => {
+            console.error('[DisplayMedia] Erreur sélection source écran:', err);
+            callback({});
+        });
     });
 
     // Chargement direct de l'application BASTION (/app = connexion / inscription / salons)
-    mainWindow.loadURL("http://127.0.0.1:8080/app").catch((err) => {
-        console.warn("[Client] Erreur de chargement initiale :", err);
-        // Réessayer une fois si le serveur prenait quelques millisecondes de plus
+    const loadApp = () => {
+        mainWindow.loadURL("http://127.0.0.1:8080/app").catch((err) => {
+            console.warn("[Client] Erreur de chargement, nouvelle tentative...", err);
+            setTimeout(() => {
+                if (mainWindow && !mainWindow.isDestroyed()) loadApp();
+            }, 1000);
+        });
+    };
+
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+        console.warn("[Client] Échec de chargement:", errorCode, errorDescription);
         setTimeout(() => {
-            if (mainWindow) mainWindow.loadURL("http://127.0.0.1:8080/app");
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.loadURL("http://127.0.0.1:8080/app").catch(() => {});
+            }
         }, 1500);
     });
+
+    loadApp();
 
     // Ouvrir les liens web externes dans le navigateur de l'utilisateur
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
