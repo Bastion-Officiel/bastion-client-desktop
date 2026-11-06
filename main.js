@@ -117,7 +117,10 @@ async function initApp() {
         app.setAppUserModelId('com.bastion.desktop');
     }
     createSplashWindow();
-    await ensureServerStarted();
+    const serverOk = await ensureServerStarted();
+    if (!serverOk) {
+        sendSplashMessage("Serveur non détecté — lancement quand même...", null, true);
+    }
     setupAutoUpdater();
 }
 
@@ -290,23 +293,72 @@ function createMainWindow() {
         });
     });
 
+    // Page de reconnexion affichée quand le serveur n'est pas joignable
+    let loadRetryCount = 0;
+    const maxRetries = 30;
+
+    const showReconnectPage = () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const reconnectHTML = `
+        <!DOCTYPE html>
+        <html><head><meta charset="UTF-8"><style>
+            * { margin:0; padding:0; box-sizing:border-box; }
+            body { background:#1e1f22; color:#dbdee1; font-family:'Segoe UI',sans-serif;
+                   display:flex; flex-direction:column; align-items:center; justify-content:center;
+                   height:100vh; -webkit-app-region:drag; }
+            .spinner { width:48px; height:48px; border:4px solid #2b2d31; border-top:4px solid #5865F2;
+                       border-radius:50%; animation:spin 1s linear infinite; margin-bottom:24px; }
+            @keyframes spin { to { transform:rotate(360deg); } }
+            h2 { font-size:18px; font-weight:700; margin-bottom:8px; }
+            p { font-size:13px; color:#949ba4; margin-bottom:20px; text-align:center; max-width:320px; }
+            button { -webkit-app-region:no-drag; background:#5865F2; color:#fff; border:none; padding:10px 24px;
+                     border-radius:4px; font-size:14px; font-weight:600; cursor:pointer; transition:background .15s; }
+            button:hover { background:#4752c4; }
+        </style></head><body>
+            <div class="spinner"></div>
+            <h2>Connexion au serveur BASTION...</h2>
+            <p>Le moteur BASTION n'est pas encore prêt. Vérifiez que le serveur est lancé (server.py).</p>
+            <button onclick="location.reload()">Réessayer</button>
+        </body></html>`;
+        mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(reconnectHTML));
+    };
+
     // Chargement direct de l'application BASTION (/app = connexion / inscription / salons)
-    const loadApp = () => {
-        mainWindow.loadURL("http://127.0.0.1:8080/app").catch((err) => {
-            console.warn("[Client] Erreur de chargement, nouvelle tentative...", err);
-            setTimeout(() => {
-                if (mainWindow && !mainWindow.isDestroyed()) loadApp();
-            }, 1000);
-        });
+    const loadApp = async () => {
+        const serverReady = await isServerReachable('http://127.0.0.1:8080/');
+        if (serverReady) {
+            loadRetryCount = 0;
+            mainWindow.loadURL("http://127.0.0.1:8080/app").catch((err) => {
+                console.warn("[Client] Erreur de chargement :", err);
+                setTimeout(() => {
+                    if (mainWindow && !mainWindow.isDestroyed()) loadApp();
+                }, 1500);
+            });
+        } else {
+            loadRetryCount++;
+            if (loadRetryCount <= 3) {
+                // Premières tentatives silencieuses (le serveur démarre peut-être)
+                console.log(`[Client] Serveur non prêt, tentative ${loadRetryCount}/${maxRetries}...`);
+                setTimeout(() => {
+                    if (mainWindow && !mainWindow.isDestroyed()) loadApp();
+                }, 1500);
+            } else if (loadRetryCount <= maxRetries) {
+                // Afficher la page de reconnexion
+                showReconnectPage();
+                setTimeout(() => {
+                    if (mainWindow && !mainWindow.isDestroyed()) loadApp();
+                }, 3000);
+            } else {
+                showReconnectPage();
+            }
+        }
     };
 
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
         console.warn("[Client] Échec de chargement:", errorCode, errorDescription);
         setTimeout(() => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.loadURL("http://127.0.0.1:8080/app").catch(() => {});
-            }
-        }, 1500);
+            if (mainWindow && !mainWindow.isDestroyed()) loadApp();
+        }, 2000);
     });
 
     loadApp();
