@@ -10,8 +10,13 @@ contextBridge.exposeInMainWorld('bastionDesktop', {
     close: () => ipcRenderer.send('window-close'),
     installUpdateNow: () => ipcRenderer.send('install-update-now'),
     checkForUpdatesManual: () => ipcRenderer.send('check-for-updates-manual'),
+    writeClipboard: (text) => ipcRenderer.invoke('clipboard-write', text),
+    saveFile: (opts) => ipcRenderer.invoke('save-file', opts),
     onUpdateStatus: (callback) => {
         ipcRenderer.on('update-status', (event, data) => callback(data));
-    }
+    },
+    onActivityUpdate: (callback) => {
+        ipcRenderer.on('user-activity-update', (event, data) => callback(data));
+    },
+    getUserActivity: () => ipcRenderer.invoke('get-user-activity')
 });
-

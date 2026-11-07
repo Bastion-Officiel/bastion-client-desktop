@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn, execSync } = require('child_process');
+const ActivityMonitor = require('./activity-monitor');
 
 // AutoUpdater (mises à jour automatiques comme Discord)
 let autoUpdater = null;
@@ -17,6 +18,7 @@ let mainWindow = null;
 let splashWindow = null;
 let tray = null;
 let serverProcess = null;
+let activityMonitor = null;
 
 // Vérifier si le serveur répond (en ligne ou local)
 function isServerReachable(url = 'https://backend-serv-jw1r.onrender.com/api/health') {
@@ -194,7 +196,7 @@ function setupAutoUpdater() {
     autoUpdater.on('update-downloaded', (info) => {
         sendSplashMessage("Mise à jour prête !", 100, false);
         notifyMainWindowUpdate('ready', { version: info.version });
-        
+
         // Si nous sommes encore sur le Splash Screen au tout début, on peut installer direct ou lancer
         if (splashWindow && !splashWindow.isDestroyed()) {
             sendSplashMessage("Installation et redémarrage...", 100, false);
@@ -376,6 +378,16 @@ function createMainWindow() {
     });
 
     createTray(appIcon);
+
+    // Initialisation & Démarrage du moniteur d'activité jeux et IDEs (Discord-like Rich Presence)
+    if (!activityMonitor) {
+        activityMonitor = new ActivityMonitor(app.getPath('userData'), (activityData) => {
+            if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+                mainWindow.webContents.send('user-activity-update', activityData);
+            }
+        });
+        activityMonitor.start();
+    }
 }
 
 function createTray(appIcon) {
@@ -433,7 +445,7 @@ ipcMain.handle('clipboard-write', (event, text) => {
     try {
         clipboard.writeText(text || '');
         return { success: true };
-    } catch(e) {
+    } catch (e) {
         return { success: false, error: e.message };
     }
 });
@@ -460,11 +472,16 @@ ipcMain.handle('save-file', async (event, { filename, content, base64Data }) => 
             return { success: false, error: 'Aucun contenu fourni' };
         }
         await fs.promises.writeFile(filePath, buffer);
-        try { shell.showItemInFolder(filePath); } catch(e) {}
+        try { shell.showItemInFolder(filePath); } catch (e) { }
         return { success: true, filePath };
-    } catch(e) {
+    } catch (e) {
         return { success: false, error: e.message };
     }
+});
+
+// Récupération de l'activité utilisateur et statistiques jeux/IDEs
+ipcMain.handle('get-user-activity', () => {
+    return activityMonitor ? activityMonitor.getPayload() : null;
 });
 
 // ─── Arrêt propre de l'application et du serveur embarqué ─────────────────
@@ -474,7 +491,7 @@ function killEmbeddedServer() {
         if (process.platform === 'win32') {
             try {
                 execSync(`taskkill /pid ${serverProcess.pid} /T /F`);
-            } catch (e) {}
+            } catch (e) { }
         } else {
             serverProcess.kill('SIGTERM');
         }
@@ -484,6 +501,9 @@ function killEmbeddedServer() {
 
 app.on('before-quit', () => {
     app.isQuitting = true;
+    if (activityMonitor) {
+        activityMonitor.stop();
+    }
     killEmbeddedServer();
 });
 
