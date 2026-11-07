@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, Menu, Tray, nativeImage, desktopCapturer } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, Menu, Tray, nativeImage, desktopCapturer, clipboard, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -18,29 +18,47 @@ let splashWindow = null;
 let tray = null;
 let serverProcess = null;
 
-// Vérifier si le serveur local répond sur le port 8080
-function isServerReachable(url = 'http://127.0.0.1:8080/') {
+// Vérifier si le serveur répond (en ligne ou local)
+function isServerReachable(url = 'https://backend-serv-jw1r.onrender.com/api/health') {
     return new Promise((resolve) => {
-        const req = http.get(url, (res) => {
-            resolve(res.statusCode < 500);
-        });
-        req.on('error', () => resolve(false));
-        req.setTimeout(1200, () => {
-            req.destroy();
+        try {
+            const parsed = new URL(url);
+            const client = parsed.protocol === 'https:' ? require('https') : require('http');
+            const req = client.get(url, (res) => {
+                resolve(res.statusCode < 500);
+            });
+            req.on('error', () => resolve(false));
+            req.setTimeout(2500, () => {
+                req.destroy();
+                resolve(false);
+            });
+        } catch (e) {
             resolve(false);
-        });
+        }
     });
 }
 
-// Démarrer automatiquement le serveur BASTION embarqué
+// Démarrer automatiquement le serveur BASTION embarqué ou se connecter au serveur souverain
 async function ensureServerStarted() {
-    const alreadyRunning = await isServerReachable();
-    if (alreadyRunning) {
-        console.log("[Serveur] Moteur BASTION déjà actif.");
+    sendSplashMessage("Connexion au serveur souverain BASTION...", null, true);
+
+    // 1. Vérifier le serveur en ligne WordPress (InfinityFree)
+    const onlineUrl = process.env.BASTION_URL || 'http://bastion.kesug.com';
+    const onlineReady = await isServerReachable(`${onlineUrl}/api/health`);
+    if (onlineReady) {
+        console.log(`[Serveur] Serveur en ligne BASTION actif : ${onlineUrl}`);
+        sendSplashMessage("Connecté au serveur souverain BASTION !", 100, false);
         return true;
     }
 
-    // Recherche de l'emplacement de server.py (dev ou compilé)
+    // 2. Vérifier si un serveur local 8080 existe déjà
+    const localRunning = await isServerReachable('http://127.0.0.1:8080/api/health');
+    if (localRunning) {
+        console.log("[Serveur] Moteur BASTION local actif.");
+        return true;
+    }
+
+    // 3. Fallback serveur local Python si présent
     let serverDir = path.join(__dirname, '..', 'bastion-core');
     let serverScript = path.join(serverDir, 'server.py');
 
@@ -50,50 +68,27 @@ async function ensureServerStarted() {
     }
 
     if (!fs.existsSync(serverScript)) {
-        console.error("[Serveur] Fichier server.py introuvable à :", serverScript);
-        return false;
+        console.log("[Serveur] Pas de serveur local, connexion au serveur web.");
+        return true;
     }
 
-    sendSplashMessage("Démarrage du moteur BASTION...", null, true);
-
     const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
-    console.log(`[Serveur] Lancement automatique : ${pythonBin} ${serverScript}`);
-
     try {
         serverProcess = spawn(pythonBin, ['server.py'], {
             cwd: serverDir,
             detached: false,
             stdio: ['ignore', 'pipe', 'pipe']
         });
-
-        serverProcess.stdout.on('data', (d) => {
-            console.log(`[BASTION Server] ${d.toString().trim()}`);
-        });
-
-        serverProcess.stderr.on('data', (d) => {
-            console.error(`[BASTION Server Log] ${d.toString().trim()}`);
-        });
-
-        serverProcess.on('exit', (code) => {
-            console.log(`[BASTION Server] Processus arrêté avec le code ${code}`);
-            serverProcess = null;
-        });
-
-        // Attente active jusqu'à ce que le serveur soit prêt (max 15 secondes)
-        for (let i = 0; i < 30; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            const ready = await isServerReachable();
-            if (ready) {
-                console.log("[Serveur] Moteur BASTION connecté avec succès !");
-                sendSplashMessage("Moteur prêt ! Connexion...", 100, false);
-                return true;
-            }
+        for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 400));
+            const ready = await isServerReachable('http://127.0.0.1:8080/api/health');
+            if (ready) return true;
         }
     } catch (err) {
-        console.error("[Serveur] Erreur au lancement du processus :", err);
+        console.error("[Serveur] Erreur au lancement local :", err);
     }
 
-    return false;
+    return true;
 }
 
 // Instance unique (Single Instance Lock)
@@ -274,6 +269,18 @@ function createMainWindow() {
         return ['media', 'notifications', 'pointerLock', 'fullscreen', 'display-capture'].includes(permission);
     });
 
+    // Rechargement sans cache (F5 / Ctrl+R) et DevTools (Ctrl+Shift+I)
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r')) {
+            mainWindow.webContents.reloadIgnoringCache();
+            event.preventDefault();
+        }
+        if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+            mainWindow.webContents.toggleDevTools();
+            event.preventDefault();
+        }
+    });
+
     mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
         callback(['media', 'notifications', 'pointerLock', 'fullscreen', 'display-capture'].includes(permission));
     });
@@ -310,48 +317,36 @@ function createMainWindow() {
                        border-radius:50%; animation:spin 1s linear infinite; margin-bottom:24px; }
             @keyframes spin { to { transform:rotate(360deg); } }
             h2 { font-size:18px; font-weight:700; margin-bottom:8px; }
-            p { font-size:13px; color:#949ba4; margin-bottom:20px; text-align:center; max-width:320px; }
+            p { font-size:13px; color:#949ba4; margin-bottom:20px; text-align:center; max-width:340px; }
             button { -webkit-app-region:no-drag; background:#5865F2; color:#fff; border:none; padding:10px 24px;
                      border-radius:4px; font-size:14px; font-weight:600; cursor:pointer; transition:background .15s; }
             button:hover { background:#4752c4; }
         </style></head><body>
             <div class="spinner"></div>
             <h2>Connexion au serveur BASTION...</h2>
-            <p>Le moteur BASTION n'est pas encore prêt. Vérifiez que le serveur est lancé (server.py).</p>
+            <p>Tentative de connexion au serveur souverain (WordPress / InfinityFree). Vérifiez votre connexion Internet.</p>
             <button onclick="location.reload()">Réessayer</button>
         </body></html>`;
         mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(reconnectHTML));
     };
 
-    // Chargement direct de l'application BASTION (/app = connexion / inscription / salons)
+    // Chargement de l'application BASTION souveraine
     const loadApp = async () => {
-        const serverReady = await isServerReachable('http://127.0.0.1:8080/');
-        if (serverReady) {
-            loadRetryCount = 0;
-            mainWindow.loadURL("http://127.0.0.1:8080/app").catch((err) => {
-                console.warn("[Client] Erreur de chargement :", err);
-                setTimeout(() => {
-                    if (mainWindow && !mainWindow.isDestroyed()) loadApp();
-                }, 1500);
-            });
-        } else {
-            loadRetryCount++;
-            if (loadRetryCount <= 3) {
-                // Premières tentatives silencieuses (le serveur démarre peut-être)
-                console.log(`[Client] Serveur non prêt, tentative ${loadRetryCount}/${maxRetries}...`);
-                setTimeout(() => {
-                    if (mainWindow && !mainWindow.isDestroyed()) loadApp();
-                }, 1500);
-            } else if (loadRetryCount <= maxRetries) {
-                // Afficher la page de reconnexion
+        const targetOnlineUrl = process.env.BASTION_URL || 'http://bastion.kesug.com/app';
+        loadRetryCount = 0;
+
+        mainWindow.loadURL(targetOnlineUrl).catch(async (err) => {
+            console.warn("[Client] Erreur accès serveur distant, test du serveur local:", err);
+            const localReady = await isServerReachable('http://127.0.0.1:8080/api/health');
+            if (localReady) {
+                mainWindow.loadURL("http://127.0.0.1:8080/app");
+            } else {
                 showReconnectPage();
                 setTimeout(() => {
                     if (mainWindow && !mainWindow.isDestroyed()) loadApp();
                 }, 3000);
-            } else {
-                showReconnectPage();
             }
-        }
+        });
     };
 
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
@@ -430,6 +425,45 @@ ipcMain.on('install-update-now', () => {
 ipcMain.on('check-for-updates-manual', () => {
     if (autoUpdater && app.isPackaged) {
         autoUpdater.checkForUpdates().catch(e => console.log(e.message));
+    }
+});
+
+// Presse-papiers natif ultra-fiable
+ipcMain.handle('clipboard-write', (event, text) => {
+    try {
+        clipboard.writeText(text || '');
+        return { success: true };
+    } catch(e) {
+        return { success: false, error: e.message };
+    }
+});
+
+// Sauvegarde de fichier native (Boîte de dialogue Enregistrer sous Windows)
+ipcMain.handle('save-file', async (event, { filename, content, base64Data }) => {
+    try {
+        const ext = filename ? filename.split('.').pop() : 'bin';
+        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+            defaultPath: path.join(app.getPath('downloads'), filename || 'fichier'),
+            filters: [
+                { name: 'Fichier', extensions: [ext] },
+                { name: 'Tous les fichiers', extensions: ['*'] }
+            ]
+        });
+        if (canceled || !filePath) return { success: false, canceled: true };
+
+        let buffer;
+        if (base64Data) {
+            buffer = Buffer.from(base64Data, 'base64');
+        } else if (content !== undefined) {
+            buffer = Buffer.from(content, 'utf-8');
+        } else {
+            return { success: false, error: 'Aucun contenu fourni' };
+        }
+        await fs.promises.writeFile(filePath, buffer);
+        try { shell.showItemInFolder(filePath); } catch(e) {}
+        return { success: true, filePath };
+    } catch(e) {
+        return { success: false, error: e.message };
     }
 });
 

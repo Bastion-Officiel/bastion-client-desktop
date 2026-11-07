@@ -1,6 +1,6 @@
 {
   "name": "bastion-desktop",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "description": "Application Desktop officielle pour BASTION — Communication Hub",
   "main": "main.js",
   "scripts": {
