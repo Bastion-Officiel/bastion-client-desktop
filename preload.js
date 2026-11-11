@@ -18,5 +18,9 @@ contextBridge.exposeInMainWorld('bastionDesktop', {
     onActivityUpdate: (callback) => {
         ipcRenderer.on('user-activity-update', (event, data) => callback(data));
     },
-    getUserActivity: () => ipcRenderer.invoke('get-user-activity')
+    getUserActivity: () => ipcRenderer.invoke('get-user-activity'),
+    addCustomGame: (opts) => ipcRenderer.invoke('add-custom-game', opts),
+    removeCustomGame: (name) => ipcRenderer.invoke('remove-custom-game', name),
+    toggleActivityEnabled: (enabled) => ipcRenderer.invoke('toggle-activity-enabled', enabled),
+    getRunningApps: () => ipcRenderer.invoke('get-running-apps')
 });

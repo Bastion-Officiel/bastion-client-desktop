@@ -484,6 +484,32 @@ ipcMain.handle('get-user-activity', () => {
     return activityMonitor ? activityMonitor.getPayload() : null;
 });
 
+ipcMain.handle('add-custom-game', (event, { name, type, category }) => {
+    if (activityMonitor) {
+        return activityMonitor.addCustomGame(name, type, category);
+    }
+    return false;
+});
+
+ipcMain.handle('remove-custom-game', (event, name) => {
+    if (activityMonitor) {
+        return activityMonitor.removeCustomGame(name);
+    }
+    return false;
+});
+
+ipcMain.handle('toggle-activity-enabled', (event, enabled) => {
+    if (activityMonitor) {
+        activityMonitor.setActivityEnabled(enabled);
+        return true;
+    }
+    return false;
+});
+
+ipcMain.handle('get-running-apps', () => {
+    return activityMonitor ? activityMonitor.getRunningProcesses() : [];
+});
+
 // ─── Arrêt propre de l'application et du serveur embarqué ─────────────────
 function killEmbeddedServer() {
     if (serverProcess) {
